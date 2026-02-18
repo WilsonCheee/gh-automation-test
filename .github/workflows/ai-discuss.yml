@@ -18,7 +18,7 @@ jobs:
         with:
           script: |
             const issue = context.payload.issue;
-            
+
             const { data: tree } = await github.rest.git.getTree({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -26,29 +26,30 @@ jobs:
               recursive: 'true'
             });
             const files = tree.tree.filter(t => t.type === 'blob').map(t => t.path).join('\n');
-            
-            const prompt = `You are a senior developer. An issue was filed in a GitHub repo.
 
-Issue title: ${issue.title}
-Issue body: ${issue.body || '(no description)'}
+            const prompt = [
+              'You are a senior developer. An issue was filed in a GitHub repo.',
+              '',
+              'Issue title: ' + issue.title,
+              'Issue body: ' + (issue.body || '(no description)'),
+              '',
+              'Repo files:',
+              files,
+              '',
+              'Propose a solution plan:',
+              '1. Which files to modify/create',
+              '2. What changes to make',
+              '3. Brief implementation approach',
+              '',
+              'Keep it concise. Use markdown. End with: Add label approved to start implementation.'
+            ].join('\n');
 
-Repo files:
-${files}
-
-Propose a solution plan:
-1. Which files to modify/create
-2. What changes to make
-3. Brief implementation approach
-
-Keep it concise. Use markdown. End with: Add label "approved" to start implementation.`;
-            
             console.log('Calling Gemini API...');
             console.log('API Key exists:', !!process.env.GEMINI_KEY);
-            console.log('API Key length:', process.env.GEMINI_KEY?.length);
-            
+
             try {
               const resp = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_KEY}`,
+                'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + process.env.GEMINI_KEY,
                 {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -57,29 +58,27 @@ Keep it concise. Use markdown. End with: Add label "approved" to start implement
                   })
                 }
               );
-              
+
               console.log('Response status:', resp.status);
               const data = await resp.json();
-              console.log('Response keys:', Object.keys(data));
-              
+
               if (data.error) {
-                console.log('API Error:', JSON.stringify(data.error));
                 throw new Error(data.error.message || JSON.stringify(data.error));
               }
-              
-              const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+              const reply = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text;
               if (!reply) {
                 console.log('Full response:', JSON.stringify(data).substring(0, 500));
                 throw new Error('No text in response');
               }
-              
+
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: issue.number,
-                body: `🤖 **AI Solution Proposal**\n\n${reply}`
+                body: '🤖 **AI Solution Proposal**\n\n' + reply
               });
-              
+
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -92,6 +91,6 @@ Keep it concise. Use markdown. End with: Add label "approved" to start implement
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: issue.number,
-                body: `❌ AI proposal failed: ${e.message}`
+                body: '❌ AI proposal failed: ' + e.message
               });
             }
