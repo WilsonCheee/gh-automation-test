@@ -1,0 +1,68 @@
+name: AI Code Review
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: AI reviews code
+        uses: actions/github-script@v7
+        env:
+          GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            
+            // Get diff
+            const { data: diff } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              mediaType: { format: 'diff' }
+            });
+            
+            const prompt = `You are a code reviewer. Review this pull request.
+
+            PR Title: ${pr.title}
+            PR Body: ${pr.body || '(none)'}
+            
+            Diff:
+            ${diff.substring(0, 8000)}
+            
+            Review the code:
+            1. Is the implementation correct?
+            2. Any bugs or issues?
+            3. Code quality concerns?
+            4. Final verdict: APPROVE or REQUEST_CHANGES
+            
+            Be concise. Use markdown.`;
+            
+            const resp = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_KEY}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [{ parts: [{ text: prompt }] }]
+                })
+              }
+            );
+            const data = await resp.json();
+            const review = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Review failed.';
+            
+            await github.rest.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              body: `🔍 **AI Code Review**\n\n${review}`,
+              event: review.toLowerCase().includes('request_changes') ? 'REQUEST_CHANGES' : 'COMMENT'
+            });
